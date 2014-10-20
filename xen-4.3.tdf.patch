@@ -1,0 +1,324 @@
+diff -ur modifiedXen/xen-4.3.0/xen/arch/x86/time.c originalXen/xen-4.3.0/xen/arch/x86/time.c
+--- modifiedXen/xen-4.3.0/xen/arch/x86/time.c	2013-11-12 15:17:17.428460000 +0000
++++ originalXen/xen-4.3.0/xen/arch/x86/time.c	2013-07-09 11:46:56.000000000 +0100
+@@ -39,12 +39,6 @@
+ #include <asm/setup.h> /* for early_time_init */
+ #include <public/arch-x86/cpuid.h>
+ 
+-
+-/*------------- DIMOS ----------*/
+-/*#define TDF 2*/
+-/*#undef TDF*/
+-/*------------------------------*/
+-
+ /* opt_clocksource: Force clocksource to one of: pit, hpet, cyclone, acpi. */
+ static char __initdata opt_clocksource[10];
+ string_param("clocksource", opt_clocksource);
+@@ -815,23 +809,6 @@
+     struct domain *d = v->domain;
+     s_time_t tsc_stamp = 0;
+ 
+-/*--------------- DIMOS ----------------- */
+-#ifdef TDF
+-    uint32_t myTdf = TDF;
+-    uint64_t dilated_system_time;
+-    uint32_t dilated_tsc_to_system_mul;
+-
+-    if(myTdf < 0 || myTdf > 1000){
+-	    printk("ERROR: Time dilation factor (%d) is not within the (0,1000] range\n. Using TDF=1 instead.", myTdf);
+-	    myTdf = 1;
+-    }
+-
+-    /*if(d->domain_id % 2){
+-      myTdf = 1;
+-      }*/
+-#endif
+-/*-----------------------------------------*/
+-
+     if ( v->vcpu_info == NULL )
+         return;
+ 
+@@ -864,43 +841,6 @@
+ 
+     memset(&_u, 0, sizeof(_u));
+ 
+-#ifdef TDF
+-    if ( d->arch.vtsc )
+-    {
+-
+-	    dilated_system_time = t->stime_local_stamp;
+-	    dilated_tsc_to_system_mul = d->arch.vtsc_to_ns.mul_frac;
+-
+-	    if(d->domain_id !=0 && myTdf > 1)
+-	    {
+-		do_div(dilated_system_time, myTdf);
+-		dilated_tsc_to_system_mul = dilated_tsc_to_system_mul/myTdf;
+-		printk("TIME DILATION(A): Time dilation for Domain %d is set to %d.\tsc_2_sys_mul=%d (dilated) \n tsc_2_sys_mul=%d (orig) \n", d->domain_id, myTdf, dilated_tsc_to_system_mul, d->arch.vtsc_to_ns.mul_frac);
+-	    }
+-
+-	    _u.tsc_timestamp     = tsc_stamp;
+-	    _u.system_time       = dilated_system_time;
+-	    _u.tsc_to_system_mul = dilated_tsc_to_system_mul;
+-	    _u.tsc_shift         = d->arch.vtsc_to_ns.shift;
+-    }
+-    else
+-    {
+-	    dilated_system_time = t->stime_local_stamp;
+-	    dilated_tsc_to_system_mul = t->tsc_scale.mul_frac;
+-
+-	    if(d->domain_id !=0 && myTdf > 1)
+-	    {
+-		    do_div(dilated_system_time, myTdf);  /* ignore the remainder for now */
+-		    dilated_tsc_to_system_mul = dilated_tsc_to_system_mul/myTdf;
+-		    printk("TIME DILATION(B): Time dilation for Domain %d is set to %d.\tsc_2_sys_mul=%d (dilated) \n tsc_2_sys_mul=%d (orig) \n", d->domain_id, myTdf, dilated_tsc_to_system_mul, d->arch.vtsc_to_ns.mul_frac);
+-	    }
+-
+-	    _u.tsc_timestamp     = t->local_tsc_stamp;
+-	    _u.system_time       = dilated_system_time;
+-	    _u.tsc_to_system_mul = dilated_tsc_to_system_mul;
+-	    _u.tsc_shift         = (s8)t->tsc_scale.shift;
+-    }
+-#else
+     if ( d->arch.vtsc )
+     {
+         _u.tsc_timestamp     = tsc_stamp;
+@@ -914,10 +854,7 @@
+         _u.system_time       = t->stime_local_stamp;
+         _u.tsc_to_system_mul = t->tsc_scale.mul_frac;
+         _u.tsc_shift         = (s8)t->tsc_scale.shift;
+-    } 
+-#endif
+-/*------------------------------------------*/
+-
++    }
+     if ( is_hvm_domain(d) )
+         _u.tsc_timestamp += v->arch.hvm_vcpu.cache_tsc_offset;
+ 
+@@ -970,35 +907,8 @@
+     *wc_version = version_update_begin(*wc_version);
+     wmb();
+ 
+-/*---------- DIMOS ------------*/
+-#ifdef TDF
+-	if ( d->domain_id != 0 ) // Never time-dilate the Control Domain
+-	{
+-		uint32_t myTdf = TDF;
+-		uint32_t remainder; 
+-		if(myTdf < 0 || myTdf > 1000){
+-			printk("ERROR: Time dilation factor (%d) is not within the (0,1000] range\n. Using TDF=1 instead.", TDF);
+-			myTdf = 1;
+-		}
+-
+-		/*if(d->domain_id % 2){
+-                	myTdf = 1;
+-        	}*/
+-
+-		shared_info(d, wc_sec)  = wc_sec + d->time_offset_seconds;
+-		remainder = do_div(shared_info(d, wc_sec), myTdf);
+-		shared_info(d, wc_nsec) = wc_nsec + remainder * 1000000000L;
+-		do_div(shared_info(d, wc_nsec), myTdf);
+-	}
+-	else{
+-		shared_info(d, wc_sec)  = wc_sec + d->time_offset_seconds;
+-		shared_info(d, wc_nsec) = wc_nsec;
+-	}
+-#else
+     shared_info(d, wc_sec)  = wc_sec + d->time_offset_seconds;
+     shared_info(d, wc_nsec) = wc_nsec;
+-#endif
+-/*----------------------------*/
+ 
+     wmb();
+     *wc_version = version_update_end(*wc_version);
+diff -ur modifiedXen/xen-4.3.0/xen/common/domain.c originalXen/xen-4.3.0/xen/common/domain.c
+--- modifiedXen/xen-4.3.0/xen/common/domain.c	2013-11-12 15:50:52.975620000 +0000
++++ originalXen/xen-4.3.0/xen/common/domain.c	2013-07-09 11:46:56.000000000 +0100
+@@ -42,12 +42,6 @@
+ #include <xen/trace.h>
+ #include <xen/tmem.h>
+ 
+-
+-/*------- DIMOS -------*/
+-/*#define TDF 2*/
+-/*#undef TDF*/
+-/*----------------------*/
+-
+ /* Linux config option: propageted to domain0 */
+ /* xen_processor_pmbits: xen control Cx, Px, ... */
+ unsigned int xen_processor_pmbits = XEN_PROCESSOR_PM_PX;
+@@ -1071,50 +1065,18 @@
+     {
+         struct vcpu_set_singleshot_timer set;
+ 
+-/*---------------- DIMOS ------------------*/
+-#ifdef TDF
+-	uint64_t dilatedTimeout;
+-	uint32_t myTdf = TDF;
+-	struct domain *d = v->domain;
+-#endif
+-/*-----------------------------------------*/
+-
+         if ( v != current )
+             return -EINVAL;
+ 
+         if ( copy_from_guest(&set, arg, 1) )
+             return -EFAULT;
+ 
+-
+-/*---------------- DIMOS ------------------*/
+-#ifdef TDF
+-	/*printk("DIMOS: SSHOT TIMER (VCPUOP_set_singleshot_timer) common.domain.c \n");*/
+-
+-	if(myTdf < 0 || myTdf > 1000){
+-		printk("ERROR: Time dilation factor (%d) is not within the (0,1000] range\n. Using TDF=1 instead.", myTdf);
+-		myTdf = 1;
+-	}
+-
+-	dilatedTimeout = set.timeout_abs_ns;
+-
+-	if(d->domain_id !=0 && myTdf > 1)
+-		dilatedTimeout *= myTdf;
+-
+-        if ( (set.flags & VCPU_SSHOTTMR_future) &&
+-             (dilatedTimeout < NOW()) )
+-            return -ETIME;
+-
+-        migrate_timer(&v->singleshot_timer, smp_processor_id());
+-        set_timer(&v->singleshot_timer, dilatedTimeout);	
+-#else
+         if ( (set.flags & VCPU_SSHOTTMR_future) &&
+              (set.timeout_abs_ns < NOW()) )
+             return -ETIME;
+ 
+         migrate_timer(&v->singleshot_timer, smp_processor_id());
+         set_timer(&v->singleshot_timer, set.timeout_abs_ns);
+-#endif
+-/*-----------------------------------------*/
+ 
+         break;
+     }
+diff -ur modifiedXen/xen-4.3.0/xen/common/schedule.c originalXen/xen-4.3.0/xen/common/schedule.c
+--- modifiedXen/xen-4.3.0/xen/common/schedule.c	2013-11-12 15:37:29.891403000 +0000
++++ originalXen/xen-4.3.0/xen/common/schedule.c	2013-07-09 11:46:56.000000000 +0100
+@@ -37,11 +37,6 @@
+ #include <public/sched.h>
+ #include <xsm/xsm.h>
+ 
+-/*------- DIMOS -------*/
+-/*#define TDF 2*/
+-/*#undef TDF*/
+-/*----------------------*/
+-
+ /* opt_sched: scheduler - default to credit */
+ static char __initdata opt_sched[10] = "credit";
+ string_param("sched", opt_sched);
+@@ -1025,31 +1020,7 @@
+ long do_set_timer_op(s_time_t timeout)
+ {
+     struct vcpu *v = current;
+-
+-/*------------------ DIMOS -----------------*/
+-	s_time_t offset;
+-#ifdef TDF
+-	uint32_t myTdf = TDF;
+-	struct domain *d = v->domain;
+-
+-	/*printk("DIMOS: entred do_set_timer_op in schedule.c \n");*/
+-
+-	if(myTdf < 0 || myTdf > 1000){
+-		printk("ERROR: Time dilation factor (%d) is not within the (0,1000] range\n. Using TDF=1 instead.", myTdf);
+-		myTdf = 1;
+-	}
+-
+-	/*if(d->domain_id % 2){
+-                myTdf = 1;
+-        }*/
+-
+-	if( d->domain_id != 0  &&  myTdf > 1)
+-		timeout *= myTdf;
+-#endif
+-	offset = timeout - NOW();
+-
+-    /*s_time_t offset = timeout - NOW();*/
+-/*------------------------------------------*/
++    s_time_t offset = timeout - NOW();
+ 
+     if ( timeout == 0 )
+     {
+@@ -1138,41 +1109,14 @@
+ 
+ static void vcpu_periodic_timer_work(struct vcpu *v)
+ {
+-
+-/*-------- DIMOS ------- */
+-#ifdef TDF
+-	uint32_t myTdf = TDF;
+-	struct domain *d = v->domain;
+-#endif
+-/*----------------------- */
+-
+     s_time_t now = NOW();
+     s_time_t periodic_next_event;
+ 
+     if ( v->periodic_period == 0 )
+         return;
+ 
+-/*-------- DIMOS -------*/
+-#ifdef TDF
+-	if(myTdf < 0 || myTdf > 1000){
+-		printk("ERROR: Time dilation factor (%d) is not within the (0,1000] range\n. Using TDF=1 instead.", myTdf);
+-		myTdf = 1;
+-	}
+-
+-	/*if(d->domain_id % 2){
+-                myTdf = 1;
+-        }*/
+-
+-	if(d->domain_id !=0 && myTdf > 1)
+-		periodic_next_event = v->periodic_last_event + (v->periodic_period * myTdf);
+-	else
+-		periodic_next_event = v->periodic_last_event + v->periodic_period;
+-#else
+-	periodic_next_event = v->periodic_last_event + v->periodic_period;
+-#endif
+-    /*periodic_next_event = v->periodic_last_event + v->periodic_period;*/
+-/*------------------------*/
+-    
++    periodic_next_event = v->periodic_last_event + v->periodic_period;
++
+     if ( now >= periodic_next_event )
+     {
+         send_timer_event(v);
+diff -ur modifiedXen/xen-4.3.0/xen/include/asm-x86/config.h originalXen/xen-4.3.0/xen/include/asm-x86/config.h
+--- modifiedXen/xen-4.3.0/xen/include/asm-x86/config.h	2014-01-31 15:25:42.693866000 +0000
++++ originalXen/xen-4.3.0/xen/include/asm-x86/config.h	2013-07-09 11:46:56.000000000 +0100
+@@ -50,11 +50,7 @@
+ #define CONFIG_XENOPROF 1
+ #define CONFIG_KEXEC 1
+ 
+-/*------------- DIMOS ----------*/
+-#define HZ 1000
+-#define TDF 20
+-/*------------------------------*/
+-
++#define HZ 100
+ 
+ #define OPT_CONSOLE_STR "vga"
+ 
+diff -ur modifiedXen/xen-4.3.0/xen/include/xen/grant_table.h originalXen/xen-4.3.0/xen/include/xen/grant_table.h
+--- modifiedXen/xen-4.3.0/xen/include/xen/grant_table.h	2013-12-06 04:39:10.576272000 +0000
++++ originalXen/xen-4.3.0/xen/include/xen/grant_table.h	2013-07-09 11:46:56.000000000 +0100
+@@ -47,11 +47,7 @@
+ 
+ #ifndef DEFAULT_MAX_NR_GRANT_FRAMES /* to allow arch to override */
+ /* Default maximum size of a grant table. [POLICY] */
+-/*
+- * ------------  DIMOS --------------------
+- * #define DEFAULT_MAX_NR_GRANT_FRAMES   32
+- */
+-#define DEFAULT_MAX_NR_GRANT_FRAMES   128
++#define DEFAULT_MAX_NR_GRANT_FRAMES   32
+ #endif
+ #ifndef max_nr_grant_frames /* to allow arch to override */
+ /* The maximum size of a grant table. */
+Only in modifiedXen/xen-4.3.0/xen: xen.efi
